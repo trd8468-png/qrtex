@@ -53,5 +53,5 @@ app.post("/api/notes",async(req,res)=>{
     res.status(201).json({id});
   }catch(e){res.status(500).json({error:e.message||"Could not create note"});}
 });
-app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"public","index.html")));
+app.use((req,res)=>res.sendFile(path.join(__dirname,"public","index.html")));
 app.listen(PORT,()=>console.log("QRTex running on "+PORT));
