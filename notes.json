@@ -1,0 +1,10 @@
+{
+  "welcome": {
+    "title": "Welcome",
+    "text": "This is your permanent QR note."
+  },
+  "door": {
+    "title": "Please Note",
+    "text": "Please keep this door closed. Thank you."
+  }
+}
