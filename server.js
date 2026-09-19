@@ -8,7 +8,6 @@ const PORT=process.env.PORT||10000;
 const TOKEN=process.env.GITHUB_TOKEN;
 const REPO=process.env.GITHUB_REPO||"trd8468-png/qrtex";
 const BRANCH=process.env.GITHUB_BRANCH||"main";
-const CREATOR_KEY=process.env.CREATOR_KEY;
 
 function apiUrl(file="notes.json"){return "https://api.github.com/repos/"+REPO+"/contents/"+file+"?ref="+encodeURIComponent(BRANCH)}
 async function gh(pathname,opts={}){
@@ -34,8 +33,6 @@ app.get("/api/notes/:id",async(req,res)=>{
 });
 app.post("/api/notes",async(req,res)=>{
   try{
-    if(!CREATOR_KEY) return res.status(503).json({error:"Creator key is not configured on the server."});
-    if(req.get("x-creator-key")!==CREATOR_KEY) return res.status(401).json({error:"Invalid creator key."});
     const id=String(req.body.id||"").trim().toLowerCase();
     const title=String(req.body.title||"").trim().slice(0,160);
     const text=String(req.body.text||"").trim().slice(0,10000);
