@@ -10,79 +10,55 @@
 </style>
 </head>
 <body>
-<div class="wrap">
-<div class="brand">QRTex • Permanent QR Notes</div>
-<main id="app"></main>
-</div>
+<div class="wrap"><div class="brand">QRTex • Permanent QR Notes</div><main id="app"></main></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
 (function(){
-  var app=document.getElementById("app");
-
-  function creator(){
-    app.innerHTML='<section class="card"><h1>Create a Permanent QR</h1><p class="sub">Enter a permanent Note ID and the exact text users should see. The QR contains only your hosted URL.</p>'+
-      '<label>Permanent Note ID</label><input id="noteId" placeholder="e.g. office-door">'+
-      '<label>Title</label><input id="noteTitle" placeholder="Important Notice">'+
-      '<label>Text / Statement</label><textarea id="noteText" placeholder="Type the exact message users should see after scanning..."></textarea>'+
-      '<label>Creator Key</label><input id="creatorKey" type="password" placeholder="Private creator key">'+
-      '<div class="actions"><button id="createBtn">Create Permanent Note</button></div>'+
-      '<div id="out"></div>'+
-      '<div class="notice">QRs do not expire. Scanners need no account. The creator key only protects the write operation.</div></section>';
-    document.getElementById("createBtn").addEventListener("click",createNote);
-  }
-
-  async function createNote(){
-    var id=document.getElementById("noteId").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,"-");
-    var title=document.getElementById("noteTitle").value.trim();
-    var text=document.getElementById("noteText").value.trim();
-    var key=document.getElementById("creatorKey").value;
-    if(!id||!text||!key){alert("Enter Note ID, text and Creator Key.");return;}
-    var response=await fetch("/api/notes",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-creator-key":key},
-      body:JSON.stringify({id:id,title:title,text:text})
-    });
-    var data=await response.json();
-    if(!response.ok){alert(data.error||"Could not create note.");return;}
-    var url=location.origin+"/n/"+encodeURIComponent(id);
-    var out=document.getElementById("out");
-    out.innerHTML='<div class="qrbox" id="qr"></div><div class="url" id="noteUrl"></div><div class="actions"><button id="downloadBtn">Download QR</button></div>';
-    document.getElementById("noteUrl").textContent=url;
-    if(typeof QRCode==="undefined"){out.insertAdjacentHTML("beforeend",'<div class="notice">QR library could not load. Reload this page and try again.</div>');return;}
-    new QRCode(document.getElementById("qr"),{text:url,width:280,height:280,colorDark:"#000000",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.H});
-    document.getElementById("downloadBtn").addEventListener("click",downloadQR);
-  }
-
-  function downloadQR(){
-    var box=document.getElementById("qr");
-    var canvas=box&&box.querySelector("canvas");
-    var img=box&&box.querySelector("img");
-    if(!canvas&&!img){alert("QR is not ready.");return;}
-    var link=document.createElement("a");
-    link.download="permanent-qr.png";
-    link.href=canvas?canvas.toDataURL("image/png"):img.src;
-    link.click();
-  }
-
-  async function viewer(id){
-    try{
-      var response=await fetch("/api/notes/"+encodeURIComponent(id));
-      if(!response.ok){
-        app.innerHTML='<section class="card viewer"><span class="pill">Permanent QR Note</span><h1>Note not found</h1><p class="sub">This QR destination does not have a published note, or the address is incorrect.</p></section>';
-        return;
-      }
-      var note=await response.json();
-      document.title=(note.title||"Permanent Note")+" • QRTex";
-      app.innerHTML='<section class="card viewer"><span class="pill">Permanent • No Expiry</span><h1 id="viewerTitle"></h1><div class="text" id="viewerText"></div></section>';
-      document.getElementById("viewerTitle").textContent=note.title||"Your message";
-      document.getElementById("viewerText").textContent=note.text||"";
-    }catch(e){
-      app.innerHTML='<section class="card viewer"><span class="pill">QRTex</span><h1>Service error</h1><p class="sub">Please try again in a moment.</p></section>';
-    }
-  }
-
-  var match=location.pathname.match(/^\/n\/([^/]+)\/?$/i);
-  if(match){viewer(decodeURIComponent(match[1]));}else{creator();}
+var app=document.getElementById("app");
+function creator(){
+app.innerHTML='<section class="card"><h1>Create a Permanent QR</h1><p class="sub">No login, PIN or authorization required. Enter your note and generate a permanent QR. The QR contains only the hosted URL.</p>'+
+'<label>Permanent Note ID</label><input id="noteId" placeholder="e.g. office-door">'+
+'<label>Title</label><input id="noteTitle" placeholder="Important Notice">'+
+'<label>Text / Statement</label><textarea id="noteText" placeholder="Type the exact message users should see after scanning..."></textarea>'+
+'<div class="actions"><button id="createBtn">Create Permanent QR</button></div><div id="out"></div>'+
+'<div class="notice">The QR has no expiry. Anyone can scan it without login, PIN or authorization.</div></section>';
+document.getElementById("createBtn").addEventListener("click",createNote);
+}
+async function createNote(){
+var id=document.getElementById("noteId").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,"-");
+var title=document.getElementById("noteTitle").value.trim();
+var text=document.getElementById("noteText").value.trim();
+if(!id||!text){alert("Enter Note ID and text.");return;}
+var btn=document.getElementById("createBtn");btn.disabled=true;btn.textContent="Creating...";
+try{
+var response=await fetch("/api/notes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,title:title,text:text})});
+var data=await response.json();
+if(!response.ok){alert(data.error||"Could not create note.");return;}
+var url=location.origin+"/n/"+encodeURIComponent(id);
+var out=document.getElementById("out");
+out.innerHTML='<div class="qrbox" id="qr"></div><div class="url" id="noteUrl"></div><div class="actions"><button id="downloadBtn">Download QR</button></div>';
+document.getElementById("noteUrl").textContent=url;
+if(typeof QRCode==="undefined"){out.insertAdjacentHTML("beforeend",'<div class="notice">QR library could not load. Reload and try again.</div>');return;}
+new QRCode(document.getElementById("qr"),{text:url,width:280,height:280,colorDark:"#000000",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.H});
+document.getElementById("downloadBtn").addEventListener("click",downloadQR);
+}catch(e){alert("Network error. Please try again.");}
+finally{btn.disabled=false;btn.textContent="Create Permanent QR";}
+}
+function downloadQR(){
+var box=document.getElementById("qr"),canvas=box&&box.querySelector("canvas"),img=box&&box.querySelector("img");
+if(!canvas&&!img){alert("QR is not ready.");return;}
+var link=document.createElement("a");link.download="permanent-qr.png";link.href=canvas?canvas.toDataURL("image/png"):img.src;link.click();
+}
+async function viewer(id){
+try{
+var response=await fetch("/api/notes/"+encodeURIComponent(id));
+if(!response.ok){app.innerHTML='<section class="card viewer"><span class="pill">Permanent QR Note</span><h1>Note not found</h1><p class="sub">This QR destination does not have a published note, or the address is incorrect.</p></section>';return;}
+var note=await response.json();document.title=(note.title||"Permanent Note")+" • QRTex";
+app.innerHTML='<section class="card viewer"><span class="pill">Permanent • No Expiry</span><h1 id="viewerTitle"></h1><div class="text" id="viewerText"></div></section>';
+document.getElementById("viewerTitle").textContent=note.title||"Your message";document.getElementById("viewerText").textContent=note.text||"";
+}catch(e){app.innerHTML='<section class="card viewer"><span class="pill">QRTex</span><h1>Service error</h1><p class="sub">Please try again in a moment.</p></section>';}
+}
+var match=location.pathname.match(/^\/n\/([^/]+)\/?$/i);if(match){viewer(decodeURIComponent(match[1]));}else{creator();}
 })();
 </script>
 </body>
