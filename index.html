@@ -1,1 +1,42 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070a12"><title>Permanent Note</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#070a12;color:#f7f8fb;display:grid;place-items:center;padding:24px}.wrap{width:min(720px,100%)}.brand{text-align:center;color:#8e9aaf;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:18px}.card{background:#121827e8;border:1px solid #ffffff1a;border-radius:28px;padding:34px;box-shadow:0 24px 80px #0008}.pill{display:inline-flex;padding:7px 11px;border-radius:999px;background:#ffffff0b;border:1px solid #ffffff12;color:#aeb9ca;font-size:12px}h1{font-size:clamp(28px,7vw,48px);line-height:1.08;letter-spacing:-1.5px;margin:18px 0 12px}.text{white-space:pre-wrap;word-break:break-word;font-size:clamp(18px,3vw,24px);line-height:1.65;color:#e9edf5}.meta{margin-top:26px;padding-top:18px;border-top:1px solid #ffffff0d;color:#778298;font-size:12px}.error{text-align:center}.error h1{font-size:34px}.error p{color:#929caf;line-height:1.6}</style></head><body><div class="wrap"><div class="brand">Permanent QR Note</div><main id="app"></main></div><script src="/notes.js"></script><script>(function(){const a=document.getElementById("app"),p=location.pathname.replace(/\/+$/,""),m=p.match(/^\/n\/([^/]+)$/i),id=m?decodeURIComponent(m[1]).toLowerCase():null,n=id&&window.NOTES?window.NOTES[id]:null;if(!n){a.innerHTML='<section class="card error"><span class="pill">Permanent QR Note</span><h1>Note not found</h1><p>This QR destination does not have a published note, or the address is incorrect.</p></section>';return}document.title=(n.title||"Your message")+" • Permanent QR Note";a.innerHTML='<section class="card"><span class="pill">Permanent • No Expiry</span><h1></h1><div class="text"></div><div class="meta">This message is served from the permanent QR destination.</div></section>';a.querySelector("h1").textContent=n.title||"Your message";a.querySelector(".text").textContent=n.text||""})()</script></body></html>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070a12"><title>QRTex</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#070a12;color:#f7f8fb;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;padding:28px}
+.wrap{width:min(900px,100%);margin:auto}.brand{text-align:center;color:#9aa5b8;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin:12px 0 20px}
+.card{background:#121827e8;border:1px solid #ffffff18;border-radius:26px;padding:28px;box-shadow:0 24px 80px #0008}
+h1{font-size:clamp(30px,7vw,50px);margin:0 0 10px;letter-spacing:-1.8px}.sub{color:#9ca8bb;line-height:1.6}
+label{display:block;color:#dbe2ee;font-size:13px;font-weight:700;margin:18px 0 8px}
+input,textarea{width:100%;border:1px solid #ffffff16;border-radius:13px;background:#080c15;color:#fff;padding:14px;font:inherit;outline:none}textarea{min-height:180px;resize:vertical}
+button{border:0;border-radius:13px;padding:13px 18px;background:#7357ff;color:white;font-weight:800;cursor:pointer;margin-top:16px}button.secondary{background:#ffffff0c;border:1px solid #ffffff15}
+.actions{display:flex;gap:10px;flex-wrap:wrap}.hidden{display:none}
+.qrbox{margin:24px auto 0;background:#fff;padding:14px;border-radius:18px;width:max-content;max-width:100%}.qrbox img,.qrbox canvas{display:block;max-width:100%}
+.url{word-break:break-all;color:#8fdbff;font-size:14px;line-height:1.6;margin-top:18px}
+.notice{margin-top:18px;padding:14px;border-radius:14px;background:#00d4ff0a;border:1px solid #00d4ff1c;color:#aeb9ca;font-size:13px;line-height:1.55}
+.viewer .text{white-space:pre-wrap;word-break:break-word;font-size:clamp(18px,3vw,25px);line-height:1.65;margin-top:22px;color:#e9edf5}.pill{display:inline-block;padding:7px 11px;border-radius:999px;background:#ffffff0b;border:1px solid #ffffff12;color:#aeb9ca;font-size:12px}
+@media(max-width:600px){body{padding:18px}.card{padding:22px}}
+</style></head>
+<body><div class="wrap"><div class="brand">QRTex • Permanent QR Notes</div><main id="app"></main></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const app=document.getElementById("app");
+function esc(s){return String(s??"")}
+async function loadViewer(id){
+ const r=await fetch("/api/notes/"+encodeURIComponent(id));
+ if(!r.ok){app.innerHTML='<section class="card viewer"><span class="pill">Permanent QR Note</span><h1>Note not found</h1><p class="sub">This QR destination does not have a published note, or the address is incorrect.</p></section>';return}
+ const n=await r.json();document.title=(n.title||"Permanent Note")+" • QRTex";
+ app.innerHTML='<section class="card viewer"><span class="pill">Permanent • No Expiry</span><h1></h1><div class="text"></div></section>';
+ app.querySelector("h1").textContent=n.title||"Your message";app.querySelector(".text").textContent=n.text||"";
+}
+function creator(){
+ app.innerHTML='<section class="card"><h1>Create a Permanent QR</h1><p class="sub">Enter a permanent note ID and your text. The QR contains only the hosted URL. Scanners do not need an account or authorization.</p><label>Permanent Note ID</label><input id="id" placeholder="e.g. office-door"><label>Title</label><input id="title" placeholder="Important Notice"><label>Text / Statement</label><textarea id="text" placeholder="Type the exact message users should see after scanning..."></textarea><label>Creator Key</label><input id="key" type="password" placeholder="Your private creator key"><div class="actions"><button onclick="createNote()">Create Permanent Note</button></div><div id="out"></div><div class="notice">The QR itself has no expiry. The URL stays the same. The hosting/domain must remain online for the QR destination to remain reachable.</div></section>';
+}
+async function createNote(){
+ const id=document.getElementById("id").value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,"-"),title=document.getElementById("title").value.trim(),text=document.getElementById("text").value.trim(),key=document.getElementById("key").value;
+ if(!id||!text||!key)return alert("Enter Note ID, text and Creator Key.");
+ const r=await fetch("/api/notes",{method:"POST",headers:{"Content-Type":"application/json","x-creator-key":key},body:JSON.stringify({id,title,text})});
+ const data=await r.json();if(!r.ok)return alert(data.error||"Could not create note.");
+ const url=location.origin+"/n/"+encodeURIComponent(id);const out=document.getElementById("out");out.innerHTML='<div class="qrbox" id="qr"></div><div class="url"></div><div class="actions"><button class="secondary" onclick="downloadQR()">Download QR</button></div>';out.querySelector(".url").textContent=url;new QRCode(document.getElementById("qr"),{text:url,width:280,height:280,colorDark:"#000",colorLight:"#fff",correctLevel:QRCode.CorrectLevel.H});
+}
+function downloadQR(){const q=document.getElementById("qr"),c=q&&q.querySelector("canvas"),i=q&&q.querySelector("img");if(!c&&!i)return;const a=document.createElement("a");a.download="permanent-qr.png";a.href=c?c.toDataURL("image/png"):i.src;a.click()}
+const m=location.pathname.match(/^/n/([^/]+)/?$/i);m?loadViewer(decodeURIComponent(m[1])):creator();
+</script></body></html>
