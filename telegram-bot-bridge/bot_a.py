@@ -135,8 +135,7 @@ async def bridge_post(payload):
 def menu():
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("💬 Contact Support", callback_data="support")],
-            [InlineKeyboardButton("🔄 New Support Request", callback_data="support")],
+            [InlineKeyboardButton("💬 Get Advice", callback_data="support")],
         ]
     )
 
@@ -174,7 +173,7 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "user_id": user.id,
         "name": name,
         "username": username,
-        "message": "Customer pressed Contact Support.",
+        "message": "Customer pressed Get Advice.",
     }
 
     try:
@@ -285,7 +284,7 @@ async def bridge_inbound(request: Request):
                 chat_id=user_id,
                 text=(
                     "✅ This support conversation has been closed.\n\n"
-                    "Tap Contact Support if you need help again."
+                    "Tap Get Advice if you need help again."
                 ),
                 reply_markup=menu(),
             )
