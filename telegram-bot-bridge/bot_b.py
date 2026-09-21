@@ -2,6 +2,14 @@ import os
 import sqlite3
 import logging
 import time
+import asyncio
+
+import httpx
+import uvicorn
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, Response
+from starlette.routing import Route
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -14,23 +22,26 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN_B", "").strip()
-BOT_A_USERNAME = os.getenv("BOT_A_USERNAME", "").strip().lstrip("@")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID", "").strip()
 DATABASE_PATH = os.getenv("DATABASE_PATH", "data/bot_b.db").strip()
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
+BRIDGE_URL = os.getenv("BOT_A_BRIDGE_URL", "").strip().rstrip("/")
+BRIDGE_SECRET = os.getenv("BRIDGE_SECRET", "").strip()
 PORT = int(os.getenv("PORT", "8080"))
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN_B is missing.")
-if not BOT_A_USERNAME:
-    raise RuntimeError("BOT_A_USERNAME is missing.")
 if not ADMIN_ID_RAW:
     raise RuntimeError("ADMIN_ID is missing.")
 if not WEBHOOK_BASE_URL:
     raise RuntimeError("WEBHOOK_BASE_URL is missing.")
 if not WEBHOOK_SECRET:
     raise RuntimeError("WEBHOOK_SECRET is missing.")
+if not BRIDGE_URL:
+    raise RuntimeError("BOT_A_BRIDGE_URL is missing.")
+if not BRIDGE_SECRET:
+    raise RuntimeError("BRIDGE_SECRET is missing.")
 
 try:
     ADMIN_ID = int(ADMIN_ID_RAW)
@@ -139,34 +150,32 @@ def get_open_sessions():
         ).fetchall()
 
 
-async def send_to_bot_a(context, text):
-    logger.info("Sending bridge message to @%s", BOT_A_USERNAME)
-    return await context.bot.send_message(
-        chat_id=f"@{BOT_A_USERNAME}",
-        text=text[:4096],
-    )
+async def bridge_post(payload):
+    headers = {
+        "X-Bridge-Secret": BRIDGE_SECRET,
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(BRIDGE_URL, json=payload, headers=headers)
+        response.raise_for_status()
+        return response
 
 
 def close_markup(session_id):
     return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "🔴 Close conversation",
-                    callback_data=f"close:{session_id}",
-                )
-            ]
-        ]
+        [[
+            InlineKeyboardButton(
+                "🔴 Close conversation",
+                callback_data=f"close:{session_id}",
+            )
+        ]]
     )
 
 
 async def notify_admin(context, text, session_id):
     sent = await context.bot.send_message(
         chat_id=ADMIN_ID,
-        text=(
-            text
-            + "\n\n↩️ Reply to THIS message to send your manual reply."
-        ),
+        text=text + "\n\n↩️ Reply to THIS message to send your manual reply.",
         reply_markup=close_markup(session_id),
     )
     save_reply_target(sent.message_id, session_id)
@@ -177,91 +186,122 @@ async def notify_admin(context, text, session_id):
     )
 
 
-async def bot_a_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    if not message or not message.from_user:
-        return
-
-    if not message.from_user.is_bot:
-        return
-
-    sender_username = (message.from_user.username or "").lower()
-    if sender_username != BOT_A_USERNAME.lower():
-        return
-
-    text = message.text or ""
-    if not text.startswith("BRIDGE_"):
-        return
-
-    logger.info(
-        "Received bridge message from @%s: %s",
-        BOT_A_USERNAME,
-        text[:160],
-    )
-
-    lines = text.split("\n")
-    command = lines[0]
-    data = {}
-
-    for line in lines[1:]:
-        if ":" in line:
-            key, value = line.split(":", 1)
-            data[key.strip()] = value.strip()
-
-    session_id = data.get("SESSION")
-    user_id = data.get("USER_ID")
-
-    if not session_id or not user_id:
-        logger.warning("Bridge message missing session/user id.")
-        return
+async def bridge_inbound(request: Request):
+    if request.headers.get("X-Bridge-Secret", "") != BRIDGE_SECRET:
+        return PlainTextResponse("Unauthorized", status_code=401)
 
     try:
-        user_id_int = int(user_id)
-    except ValueError:
-        logger.warning("Invalid USER_ID in bridge message.")
-        return
+        data = await request.json()
+    except Exception:
+        return PlainTextResponse("Invalid JSON", status_code=400)
 
-    if command == "BRIDGE_REQUEST":
-        name = data.get("NAME", "Unknown")
-        username = data.get("USERNAME", "no username")
-        event = data.get("MESSAGE", "")
+    message_type = str(data.get("type", "")).strip()
+    session_id = str(data.get("session_id", "")).strip()
 
-        save_session(session_id, user_id_int, name, username)
+    if message_type == "BRIDGE_REQUEST":
+        if not session_id:
+            return PlainTextResponse("Missing session_id", status_code=400)
+
+        try:
+            user_id = int(data.get("user_id"))
+        except (TypeError, ValueError):
+            return PlainTextResponse("Invalid user_id", status_code=400)
+
+        name = str(data.get("name", "Unknown")).strip() or "Unknown"
+        username = str(data.get("username", "no username")).strip() or "no username"
+        event = str(data.get("message", "")).strip()
+
+        save_session(session_id, user_id, name, username)
 
         await notify_admin(
-            context,
+            application.bot,
             "📩 NEW SUPPORT REQUEST\n\n"
             f"🆔 Session: {session_id}\n"
             f"👤 Name: {name}\n"
             f"🔗 Username: {username}\n"
-            f"🪪 User ID: {user_id_int}\n\n"
+            f"🪪 User ID: {user_id}\n\n"
             f"💬 {event}",
             session_id,
         )
 
         try:
-            await send_to_bot_a(
-                context,
-                "BRIDGE_ACK\n"
-                f"SESSION:{session_id}\n"
-                "MESSAGE:✅ Your support request has reached our team. "
-                "Please wait for a manual reply.",
-            )
+            await bridge_post({
+                "type": "BRIDGE_ACK",
+                "session_id": session_id,
+                "message": (
+                    "✅ Your support request has reached our team. "
+                    "Please wait for a manual reply."
+                ),
+            })
+            logger.info("ACK delivered to Bot A. session=%s", session_id)
         except Exception:
-            logger.exception("ACK to Bot A failed.")
+            logger.exception("ACK to Bot A bridge failed.")
 
-    elif command == "BRIDGE_USER":
-        message_text = data.get("MESSAGE", "")
-        save_session(session_id, user_id_int)
+        return PlainTextResponse("OK")
+
+    if message_type == "BRIDGE_USER":
+        if not session_id:
+            return PlainTextResponse("Missing session_id", status_code=400)
+
+        try:
+            user_id = int(data.get("user_id"))
+        except (TypeError, ValueError):
+            return PlainTextResponse("Invalid user_id", status_code=400)
+
+        message_text = str(data.get("message", "")).strip()
+        save_session(session_id, user_id)
 
         await notify_admin(
-            context,
+            application.bot,
             "💬 USER MESSAGE\n\n"
             f"🆔 Session: {session_id}\n"
-            f"🪪 User ID: {user_id_int}\n\n"
+            f"🪪 User ID: {user_id}\n\n"
             f"💬 {message_text}",
             session_id,
         )
+        return PlainTextResponse("OK")
+
+    if message_type == "BRIDGE_HEALTH":
+        return PlainTextResponse("OK")
+
+    return PlainTextResponse("Unknown bridge message", status_code=400)
+
+
+async def telegram_webhook(request: Request):
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != WEBHOOK_SECRET:
+        return PlainTextResponse("Unauthorized", status_code=401)
+
+    try:
+        data = await request.json()
+        update = Update.de_json(data=data, bot=application.bot)
+        await application.update_queue.put(update)
+    except Exception:
+        logger.exception("Invalid Telegram webhook update.")
+        return PlainTextResponse("Bad Request", status_code=400)
+
+    return Response(status_code=200)
+
+
+async def health(request: Request):
+    return PlainTextResponse("Bot B is running.")
+
+
+async def post_init(app: Application):
+    me = await app.bot.get_me()
+    logger.info("BOT B identity verified: @%s (id=%s)", me.username, me.id)
+    await app.bot.set_webhook(
+        url=f"{WEBHOOK_BASE_URL}/{WEBHOOK_SECRET}",
+        secret_token=WEBHOOK_SECRET,
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=False,
+        max_connections=40,
+    )
+    webhook = await app.bot.get_webhook_info()
+    logger.info(
+        "BOT B webhook active: url=%s pending=%s",
+        webhook.url or "<empty>",
+        webhook.pending_update_count,
+    )
 
 
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -273,14 +313,10 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not message.reply_to_message:
-        await message.reply_text(
-            "↩️ Reply directly to a support notification."
-        )
+        await message.reply_text("↩️ Reply directly to a support notification.")
         return
 
-    session_id = get_session_for_admin_message(
-        message.reply_to_message.message_id
-    )
+    session_id = get_session_for_admin_message(message.reply_to_message.message_id)
 
     if not session_id:
         await message.reply_text(
@@ -290,27 +326,20 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = message.text or message.caption or ""
     if not text:
-        await message.reply_text(
-            "Please send a text reply for now."
-        )
+        await message.reply_text("Please send a text reply for now.")
         return
 
     try:
-        await send_to_bot_a(
-            context,
-            "BRIDGE_REPLY\n"
-            f"SESSION:{session_id}\n"
-            f"MESSAGE:{text[:3500]}",
-        )
-        await message.reply_text(
-            "✅ Reply sent → Bot A → customer."
-        )
+        await bridge_post({
+            "type": "BRIDGE_REPLY",
+            "session_id": session_id,
+            "message": text[:3500],
+        })
+        await message.reply_text("✅ Reply sent → Bot A → customer.")
+        logger.info("Manual reply delivered to Bot A. session=%s", session_id)
     except Exception:
-        logger.exception("Could not send reply to Bot A.")
-        await message.reply_text(
-            "❌ Reply failed. Check Bot-to-Bot Communication Mode "
-            "on both bots."
-        )
+        logger.exception("Could not send reply to Bot A bridge.")
+        await message.reply_text("❌ Reply delivery failed. Please try again.")
 
 
 async def close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -327,10 +356,10 @@ async def close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Closing...")
 
     try:
-        await send_to_bot_a(
-            context,
-            f"BRIDGE_CLOSE\n{session_id}",
-        )
+        await bridge_post({
+            "type": "BRIDGE_CLOSE",
+            "session_id": session_id,
+        })
         close_session_local(session_id)
 
         if query.message:
@@ -371,7 +400,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "1. Wait for a support notification.\n"
             "2. Use Telegram Reply ↩️ on that notification.\n"
             "3. Type your manual response and send it.\n"
-            "4. The response goes Bot B → Bot A → customer.\n\n"
+            "4. The response goes Bot B → HTTPS → Bot A → customer.\n\n"
             "/sessions - list open conversations"
         )
 
@@ -403,65 +432,57 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
-async def post_init(app: Application):
-    me = await app.bot.get_me()
-    webhook = await app.bot.get_webhook_info()
-
-    logger.info(
-        "BOT B identity verified: @%s (id=%s)",
-        me.username,
-        me.id,
-    )
-    logger.info(
-        "Existing webhook before startup: url=%s pending=%s",
-        webhook.url or "<empty>",
-        webhook.pending_update_count,
+def build_web_app():
+    return Starlette(
+        routes=[
+            Route("/health", health, methods=["GET"]),
+            Route("/bridge/inbound", bridge_inbound, methods=["POST"]),
+            Route(f"/{WEBHOOK_SECRET}", telegram_webhook, methods=["POST"]),
+        ]
     )
 
 
-def main():
+async def main():
+    global application
     init_db()
 
-    app = (
+    application = (
         Application.builder()
         .token(BOT_TOKEN)
+        .updater(None)
         .post_init(post_init)
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("sessions", sessions_command))
-    app.add_handler(
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("sessions", sessions_command))
+    application.add_handler(
         CallbackQueryHandler(close_callback, pattern=r"^close:")
     )
-
-    # Bot-to-bot messages from Bot A
-    app.add_handler(MessageHandler(filters.ALL, bot_a_message), group=0)
-
-    # Human admin replies
-    app.add_handler(
+    application.add_handler(
         MessageHandler(filters.ALL & ~filters.COMMAND, admin_reply),
         group=1,
     )
 
-    webhook_url = f"{WEBHOOK_BASE_URL}/{WEBHOOK_SECRET}"
-
-    logger.info("BOT B starting in WEBHOOK mode.")
-    logger.info("BOT B bridge source: @%s", BOT_A_USERNAME)
-    logger.info("BOT B public webhook: %s", WEBHOOK_BASE_URL)
-
-    app.run_webhook(
-        listen="0.0.0.0",
+    web_app = build_web_app()
+    config = uvicorn.Config(
+        web_app,
+        host="0.0.0.0",
         port=PORT,
-        url_path=WEBHOOK_SECRET,
-        webhook_url=webhook_url,
-        secret_token=WEBHOOK_SECRET,
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=False,
-        max_connections=40,
+        log_level="info",
+        access_log=False,
     )
+    server = uvicorn.Server(config)
+
+    logger.info("BOT B starting in CUSTOM WEBHOOK mode.")
+    logger.info("BOT B HTTPS bridge endpoint configured.")
+
+    async with application:
+        await application.start()
+        await server.serve()
+        await application.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
