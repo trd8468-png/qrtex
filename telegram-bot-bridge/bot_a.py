@@ -69,6 +69,14 @@ def init_db():
                 updated_at INTEGER NOT NULL
             )"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS session_messages (
+                session_id TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY(session_id, message_id)
+            )"""
+        )
         conn.commit()
 
 
@@ -101,6 +109,26 @@ def touch_session(session_id):
             (int(time.time()), session_id),
         )
         conn.commit()
+
+
+def save_message_id(session_id, message_id):
+    if not session_id or not message_id:
+        return
+    with db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO session_messages VALUES (?, ?, ?)",
+            (session_id, int(message_id), int(time.time())),
+        )
+        conn.commit()
+
+
+def get_session_message_ids(session_id):
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT message_id FROM session_messages WHERE session_id=? ORDER BY message_id",
+            (session_id,),
+        ).fetchall()
+        return [int(row["message_id"]) for row in rows]
 
 
 def close_session(session_id):
@@ -144,12 +172,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user:
         return
 
-    await update.message.reply_text(
+    sent = await update.message.reply_text(
         f"👋 Hello {update.effective_user.first_name or 'there'}!\n\n"
         "Welcome. If you need help, tap the button below.\n\n"
         "A support team member will reply manually.",
         reply_markup=menu(),
     )
+    session = get_session(update.effective_user.id)
+    if session:
+        save_message_id(session["session_id"], sent.message_id)
+        save_message_id(session["session_id"], update.message.message_id)
 
 
 async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -163,6 +195,7 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = get_session(user.id)
     session_id = session["session_id"] if session else create_session(user.id)
     touch_session(session_id)
+    save_message_id(session_id, query.message.message_id)
 
     name = " ".join(x for x in [user.first_name, user.last_name] if x).strip() or "Unknown"
     username = f"@{user.username}" if user.username else "no username"
@@ -179,15 +212,17 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await bridge_post(payload)
         logger.info("Support request delivered to Bot B bridge. session=%s", session_id)
-        await query.message.reply_text(
+        sent = await query.message.reply_text(
             "✅ Support request sent.\n\n"
             "A team member will reply here shortly."
         )
+        save_message_id(session_id, sent.message_id)
     except Exception:
         logger.exception("Could not send request to Bot B bridge.")
-        await query.message.reply_text(
+        sent = await query.message.reply_text(
             "❌ Support is temporarily unavailable. Please try again later."
         )
+        save_message_id(session_id, sent.message_id)
 
 
 async def user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,8 +236,13 @@ async def user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     session = get_session(user.id)
 
+    if session:
+        session_id = session["session_id"]
+        save_message_id(session_id, update.message.message_id)
+
     if not session:
         session_id = create_session(user.id)
+        save_message_id(session_id, update.message.message_id)
         name = " ".join(x for x in [user.first_name, user.last_name] if x).strip() or "Unknown"
         username = f"@{user.username}" if user.username else "no username"
 
@@ -217,14 +257,16 @@ async def user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
         except Exception:
             logger.exception("Could not create support request.")
-            await update.message.reply_text("❌ Support is temporarily unavailable.")
+            sent = await update.message.reply_text("❌ Support is temporarily unavailable.")
+            save_message_id(session_id, sent.message_id)
             return
     else:
         session_id = session["session_id"]
 
     text = update.message.text or update.message.caption or ""
     if not text:
-        await update.message.reply_text("Please send your message as text for now.")
+        sent = await update.message.reply_text("Please send your message as text for now.")
+        save_message_id(session_id, sent.message_id)
         return
 
     touch_session(session_id)
@@ -238,9 +280,10 @@ async def user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
     except Exception:
         logger.exception("Could not relay user message.")
-        await update.message.reply_text(
+        sent = await update.message.reply_text(
             "❌ Your message could not be delivered. Please try again."
         )
+        save_message_id(session_id, sent.message_id)
 
 
 async def bridge_inbound(request: Request):
@@ -279,14 +322,37 @@ async def bridge_inbound(request: Request):
 
         user_id = user_for_session(session_id)
         if user_id:
+            message_ids = get_session_message_ids(session_id)
+
+            # Telegram allows bots to delete incoming and outgoing messages
+            # in private chats, subject to Telegram's deletion time limits.
+            # Delete in chunks so a long conversation is handled safely.
+            for i in range(0, len(message_ids), 100):
+                batch = message_ids[i:i + 100]
+                if batch:
+                    try:
+                        await application.bot.delete_messages(
+                            chat_id=user_id,
+                            message_ids=batch,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Could not delete some conversation messages. session=%s",
+                            session_id,
+                        )
+
             close_session(session_id)
-            await application.bot.send_message(
-                chat_id=user_id,
-                text=(
-                    "✅ This support conversation has been closed.\n\n"
-                    "Tap Get Advice if you need help again."
-                ),
-                reply_markup=menu(),
+            with db() as conn:
+                conn.execute(
+                    "DELETE FROM session_messages WHERE session_id=?",
+                    (session_id,),
+                )
+                conn.commit()
+
+            logger.info(
+                "Conversation closed and cleanup requested. session=%s messages=%s",
+                session_id,
+                len(message_ids),
             )
         return PlainTextResponse("OK")
 
