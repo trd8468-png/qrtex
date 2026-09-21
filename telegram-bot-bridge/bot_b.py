@@ -315,7 +315,7 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "session_id": session_id,
             "message": text[:3500],
         })
-        await message.reply_text("✅ Reply sent → Bot A → customer.")
+        await message.reply_text("✅ Reply sent → customer.")
         logger.info("Manual reply delivered to Bot A. session=%s", session_id)
     except Exception:
         logger.exception("Could not send reply to Bot A bridge.")
