@@ -172,8 +172,8 @@ def close_markup(session_id):
     )
 
 
-async def notify_admin(context, text, session_id):
-    sent = await context.bot.send_message(
+async def notify_admin(bot, text, session_id):
+    sent = await bot.send_message(
         chat_id=ADMIN_ID,
         text=text + "\n\n↩️ Reply to THIS message to send your manual reply.",
         reply_markup=close_markup(session_id),
