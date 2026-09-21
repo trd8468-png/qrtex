@@ -163,7 +163,7 @@ async def bridge_post(payload):
 def support_menu():
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("💬 Get Advice", callback_data="support")],
+            [InlineKeyboardButton("💬 Advice", callback_data="support")],
         ]
     )
 
@@ -219,7 +219,7 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "user_id": user.id,
         "name": name,
         "username": username,
-        "message": "Customer pressed Get Advice.",
+        "message": "Customer pressed Advice.",
     }
 
     try:
