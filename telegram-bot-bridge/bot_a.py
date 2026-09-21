@@ -160,14 +160,6 @@ async def bridge_post(payload):
         return response
 
 
-def start_menu():
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("▶️ Start", callback_data="start_support")],
-        ]
-    )
-
-
 def support_menu():
     return InlineKeyboardMarkup(
         [
@@ -190,34 +182,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exc,
         )
 
-    existing_session = get_session(update.effective_user.id)
-
     sent = await context.bot.send_message(
         chat_id=update.effective_user.id,
         text=(
             f"👋 Hello {update.effective_user.first_name or 'there'}!\n\n"
-            "Welcome. Press Start to continue."
+            "How can we help you?"
         ),
-        reply_markup=support_menu() if existing_session else start_menu(),
-    )
-
-    # An existing open session owns this menu message so Close can remove it.
-    if existing_session:
-        save_message_id(existing_session["session_id"], sent.message_id)
-
-
-async def start_support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query or not query.from_user or not query.message:
-        return
-
-    await query.answer("Ready.")
-
-    await query.edit_message_text(
-        f"👋 Hello {query.from_user.first_name or 'there'}!\n\n"
-        "How can we help you?",
         reply_markup=support_menu(),
     )
+
+    # If there is already an open session, keep this menu message tracked for cleanup.
+    existing_session = get_session(update.effective_user.id)
+    if existing_session:
+        save_message_id(existing_session["session_id"], sent.message_id)
 
 
 async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -470,9 +447,6 @@ async def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(
-        CallbackQueryHandler(start_support_button, pattern="^start_support$")
-    )
     application.add_handler(CallbackQueryHandler(support_button, pattern="^support$"))
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.COMMAND, user_message),
