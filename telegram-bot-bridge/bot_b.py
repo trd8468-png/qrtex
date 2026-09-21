@@ -474,10 +474,7 @@ async def main():
         CallbackQueryHandler(close_callback, pattern=r"^close:")
     )
     application.add_handler(
-        MessageHandler(
-            filters.TEXT & filters.REPLY & filters.User(ADMIN_ID),
-            admin_reply,
-        ),
+        MessageHandler(filters.ALL & ~filters.COMMAND, admin_reply),
         group=0,
     )
 
