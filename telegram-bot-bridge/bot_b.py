@@ -309,7 +309,20 @@ async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not message or not message.from_user:
         return
+
+    logger.info(
+        "Incoming admin message. user_id=%s chat_id=%s message_id=%s reply_to=%s",
+        message.from_user.id,
+        message.chat_id,
+        message.message_id,
+        message.reply_to_message.message_id if message.reply_to_message else None,
+    )
+
     if message.from_user.id != ADMIN_ID:
+        logger.warning(
+            "Ignoring message from non-admin user_id=%s",
+            message.from_user.id,
+        )
         return
 
     if not message.reply_to_message:
@@ -461,8 +474,11 @@ async def main():
         CallbackQueryHandler(close_callback, pattern=r"^close:")
     )
     application.add_handler(
-        MessageHandler(filters.ALL & ~filters.COMMAND, admin_reply),
-        group=1,
+        MessageHandler(
+            filters.TEXT & filters.REPLY & filters.User(ADMIN_ID),
+            admin_reply,
+        ),
+        group=0,
     )
 
     web_app = build_web_app()
