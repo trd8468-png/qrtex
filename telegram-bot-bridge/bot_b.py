@@ -218,19 +218,10 @@ async def bridge_inbound(request: Request):
             session_id,
         )
 
-        try:
-            await bridge_post({
-                "type": "BRIDGE_ACK",
-                "session_id": session_id,
-                "message": (
-                    "✅ Your support request has reached our team. "
-                    "Please wait for a manual reply."
-                ),
-            })
-            logger.info("ACK delivered to Bot A. session=%s", session_id)
-        except Exception:
-            logger.exception("ACK to Bot A bridge failed.")
-
+        # Bot A already sends the customer-facing confirmation:
+        # "✅ Support request sent. A team member will reply here shortly."
+        # Do not send a second ACK from Bot B, so the customer sees only one
+        # confirmation message.
         return PlainTextResponse("OK")
 
     if message_type == "BRIDGE_USER":
