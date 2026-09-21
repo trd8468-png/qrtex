@@ -33,7 +33,9 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
 )
-logging.getLogger("httpx").setLevel(logging.WARNING)\nlogging.getLogger("httpcore").setLevel(logging.WARNING)\nlogger = logging.getLogger("bot-a")
+logging.getLogger("httpx").setLevel(logging.WARNING)\nlogging.getLogger("httpcore").setLevel(logging.WARNING)\nlogging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logger = logging.getLogger("bot-a")
 
 
 def db():
