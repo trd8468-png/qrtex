@@ -8,7 +8,7 @@ import httpx
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -24,8 +24,6 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN_B", "").strip()
 ADMIN_ID_RAW = os.getenv("ADMIN_ID", "").strip()
 DATABASE_PATH = os.getenv("DATABASE_PATH", "data/bot_b.db").strip()
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 BRIDGE_URL = os.getenv("BOT_A_BRIDGE_URL", "").strip().rstrip("/")
 BRIDGE_SECRET = os.getenv("BRIDGE_SECRET", "").strip()
 PORT = int(os.getenv("PORT", "8080"))
@@ -34,10 +32,6 @@ if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN_B is missing.")
 if not ADMIN_ID_RAW:
     raise RuntimeError("ADMIN_ID is missing.")
-if not WEBHOOK_BASE_URL:
-    raise RuntimeError("WEBHOOK_BASE_URL is missing.")
-if not WEBHOOK_SECRET:
-    raise RuntimeError("WEBHOOK_SECRET is missing.")
 if not BRIDGE_URL:
     raise RuntimeError("BOT_A_BRIDGE_URL is missing.")
 if not BRIDGE_SECRET:
@@ -267,21 +261,6 @@ async def bridge_inbound(request: Request):
     return PlainTextResponse("Unknown bridge message", status_code=400)
 
 
-async def telegram_webhook(request: Request):
-    if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != WEBHOOK_SECRET:
-        return PlainTextResponse("Unauthorized", status_code=401)
-
-    try:
-        data = await request.json()
-        update = Update.de_json(data=data, bot=application.bot)
-        await application.update_queue.put(update)
-    except Exception:
-        logger.exception("Invalid Telegram webhook update.")
-        return PlainTextResponse("Bad Request", status_code=400)
-
-    return Response(status_code=200)
-
-
 async def health(request: Request):
     return PlainTextResponse("Bot B is running.")
 
@@ -289,19 +268,16 @@ async def health(request: Request):
 async def post_init(app: Application):
     me = await app.bot.get_me()
     logger.info("BOT B identity verified: @%s (id=%s)", me.username, me.id)
-    await app.bot.set_webhook(
-        url=f"{WEBHOOK_BASE_URL}/{WEBHOOK_SECRET}",
-        secret_token=WEBHOOK_SECRET,
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=False,
-        max_connections=40,
-    )
+
+    # Bot B receives admin messages through long polling.
+    # Remove any old outgoing webhook first because Telegram does not allow
+    # getUpdates while a webhook is active.
     webhook = await app.bot.get_webhook_info()
-    logger.info(
-        "BOT B webhook active: url=%s pending=%s",
-        webhook.url or "<empty>",
-        webhook.pending_update_count,
-    )
+    if webhook.url:
+        await app.bot.delete_webhook(drop_pending_updates=False)
+        logger.info("Old Telegram webhook removed. pending=%s", webhook.pending_update_count)
+    else:
+        logger.info("No Telegram webhook was configured for Bot B.")
 
 
 async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -446,11 +422,12 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def build_web_app():
+    # HTTPS bridge remains available for Bot A <-> Bot B communication.
+    # Telegram admin updates no longer depend on this custom webhook.
     return Starlette(
         routes=[
             Route("/health", health, methods=["GET"]),
             Route("/bridge/inbound", bridge_inbound, methods=["POST"]),
-            Route(f"/{WEBHOOK_SECRET}", telegram_webhook, methods=["POST"]),
         ]
     )
 
@@ -462,7 +439,6 @@ async def main():
     application = (
         Application.builder()
         .token(BOT_TOKEN)
-        .updater(None)
         .post_init(post_init)
         .build()
     )
@@ -488,13 +464,23 @@ async def main():
     )
     server = uvicorn.Server(config)
 
-    logger.info("BOT B starting in CUSTOM WEBHOOK mode.")
+    logger.info("BOT B starting in POLLING + HTTPS BRIDGE mode.")
+    logger.info("BOT B admin updates will use Telegram long polling.")
     logger.info("BOT B HTTPS bridge endpoint configured.")
 
     async with application:
         await application.start()
-        await server.serve()
-        await application.stop()
+        if application.updater is None:
+            raise RuntimeError("PTB updater is unexpectedly unavailable.")
+        await application.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False,
+        )
+        try:
+            await server.serve()
+        finally:
+            await application.updater.stop()
+            await application.stop()
 
 
 if __name__ == "__main__":
