@@ -311,9 +311,15 @@ async def bridge_inbound(request: Request):
             logger.warning("Unknown session from Bot B: %s", session_id)
             return PlainTextResponse("Unknown session", status_code=404)
 
-        await application.bot.send_message(chat_id=user_id, text=body[:4096])
+        sent = await application.bot.send_message(chat_id=user_id, text=body[:4096])
+        save_message_id(session_id, sent.message_id)
         touch_session(session_id)
-        logger.info("Delivered %s to customer. session=%s", message_type, session_id)
+        logger.info(
+            "Delivered %s to customer. session=%s message_id=%s",
+            message_type,
+            session_id,
+            sent.message_id,
+        )
         return PlainTextResponse("OK")
 
     if message_type == "BRIDGE_CLOSE":
@@ -324,22 +330,27 @@ async def bridge_inbound(request: Request):
         if user_id:
             message_ids = get_session_message_ids(session_id)
 
-            # Telegram allows bots to delete incoming and outgoing messages
-            # in private chats, subject to Telegram's deletion time limits.
-            # Delete in chunks so a long conversation is handled safely.
-            for i in range(0, len(message_ids), 100):
-                batch = message_ids[i:i + 100]
-                if batch:
-                    try:
-                        await application.bot.delete_messages(
-                            chat_id=user_id,
-                            message_ids=batch,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Could not delete some conversation messages. session=%s",
-                            session_id,
-                        )
+            # Delete one-by-one for maximum compatibility and detailed error
+            # reporting. Telegram permits bots to delete incoming and outgoing
+            # messages in private chats, subject to the 48-hour limit.
+            deleted = 0
+            failed = 0
+
+            for message_id in message_ids:
+                try:
+                    await application.bot.delete_message(
+                        chat_id=user_id,
+                        message_id=message_id,
+                    )
+                    deleted += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.warning(
+                        "Delete failed. session=%s message_id=%s error=%s",
+                        session_id,
+                        message_id,
+                        exc,
+                    )
 
             close_session(session_id)
             with db() as conn:
@@ -350,9 +361,11 @@ async def bridge_inbound(request: Request):
                 conn.commit()
 
             logger.info(
-                "Conversation closed and cleanup requested. session=%s messages=%s",
+                "Conversation cleanup finished. session=%s tracked=%s deleted=%s failed=%s",
                 session_id,
                 len(message_ids),
+                deleted,
+                failed,
             )
         return PlainTextResponse("OK")
 
