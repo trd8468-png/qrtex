@@ -455,6 +455,17 @@ def build_web_app():
     )
 
 
+async def process_updates(app: Application):
+    """Consume updates from the queue and dispatch to handlers."""
+    logger.info("Update processor started.")
+    while True:
+        try:
+            update = await app.update_queue.get()
+            await app.process_update(update)
+        except Exception:
+            logger.exception("Error processing update.")
+
+
 async def main():
     global application
     init_db()
@@ -474,7 +485,7 @@ async def main():
         CallbackQueryHandler(close_callback, pattern=r"^close:")
     )
     application.add_handler(
-        MessageHandler(filters.ALL & ~filters.COMMAND, admin_reply),
+        MessageHandler(filters.TEXT & filters.REPLY, admin_reply),
         group=0,
     )
 
@@ -493,9 +504,21 @@ async def main():
 
     async with application:
         await application.start()
-        await server.serve()
-        await application.stop()
+        
+        # Start the update processor task alongside the server
+        processor_task = asyncio.create_task(process_updates(application))
+        
+        try:
+            await server.serve()
+        finally:
+            processor_task.cancel()
+            try:
+                await processor_task
+            except asyncio.CancelledError:
+                pass
+            await application.stop()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
