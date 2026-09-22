@@ -11,11 +11,10 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
     filters,
@@ -160,19 +159,11 @@ async def bridge_post(payload):
         return response
 
 
-def support_menu():
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("💬 Advice", callback_data="support")],
-        ]
-    )
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user:
         return
 
-    # Delete the user's /start command so it does not remain in the chat.
+    # Delete the user's /start command so the chat stays clean.
     try:
         await update.message.delete()
     except Exception as exc:
@@ -182,33 +173,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exc,
         )
 
-    sent = await context.bot.send_message(
-        chat_id=update.effective_user.id,
-        text=(
-            f"👋 Hello {update.effective_user.first_name or 'there'}!\n\n"
-            "How can we help you?"
-        ),
-        reply_markup=support_menu(),
-    )
-
-    # If there is already an open session, keep this menu message tracked for cleanup.
-    existing_session = get_session(update.effective_user.id)
-    if existing_session:
-        save_message_id(existing_session["session_id"], sent.message_id)
-
-
-async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query or not query.from_user or not query.message:
-        return
-
-    await query.answer("Connecting you to support...")
-
-    user = query.from_user
+    user = update.effective_user
     session = get_session(user.id)
     session_id = session["session_id"] if session else create_session(user.id)
     touch_session(session_id)
-    save_message_id(session_id, query.message.message_id)
 
     name = " ".join(x for x in [user.first_name, user.last_name] if x).strip() or "Unknown"
     username = f"@{user.username}" if user.username else "no username"
@@ -219,23 +187,29 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "user_id": user.id,
         "name": name,
         "username": username,
-        "message": "Customer pressed Advice.",
+        "message": "Customer pressed Start to request Advice.",
     }
 
     try:
         await bridge_post(payload)
-        logger.info("Support request delivered to Bot B bridge. session=%s", session_id)
-        sent = await query.message.reply_text(
-            "✅ Support request sent.\n\n"
-            "A team member will reply here shortly."
+        logger.info("Advice request delivered to Bot B bridge. session=%s", session_id)
+        sent = await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                "✅ Support request sent.\n\n"
+                "A team member will reply here shortly."
+            ),
         )
         save_message_id(session_id, sent.message_id)
     except Exception:
-        logger.exception("Could not send request to Bot B bridge.")
-        sent = await query.message.reply_text(
-            "❌ Support is temporarily unavailable. Please try again later."
+        logger.exception("Could not send Advice request to Bot B bridge.")
+        sent = await context.bot.send_message(
+            chat_id=user.id,
+            text="❌ Support is temporarily unavailable. Please try again later.",
         )
         save_message_id(session_id, sent.message_id)
+
+
 
 
 async def user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -447,7 +421,6 @@ async def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CallbackQueryHandler(support_button, pattern="^support$"))
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.COMMAND, user_message),
         group=1,
